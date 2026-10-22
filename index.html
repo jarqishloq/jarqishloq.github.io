@@ -411,6 +411,41 @@ function installHTML(){if(isStandalone())return '';if(DEFERRED)return '<button c
   if(/iphone|ipad|ipod/i.test(navigator.userAgent))return '<p class="insthint">Ilova qilib o‘rnatish: Safari’da <b>Ulashish</b> → <b>На экран «Домой» / Add to Home Screen</b></p>';return ''}
 function setHash(id){try{history.replaceState(null,'',id?'#'+id:location.pathname+location.search)}catch(_){}}
 
+function he(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function tgReady(){return !!(C.tg&&C.tg.token&&C.tg.chat)}
+function tgCall(method,fd){
+  return fetch('https://api.telegram.org/bot'+C.tg.token+'/'+method,{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(j){if(!j.ok)throw new Error(j.description||'Telegram xatosi');return j})
+  .catch(function(e){if(e&&e.name==='TypeError')return {ok:true,unsure:true};throw e});
+}
+function tgCaption(p){
+  var c=CATMAP[catOf(p)],u=p.unit?' / '+p.unit:'',L=['<b>'+he(p.name)+'</b>',''];
+  if(hasVar(p))p.variants.forEach(function(v){L.push(he(v.name)+': <b>'+plainMoney(v.price)+' so‘m</b>'+he(u))});
+  else if(onSale(p))L.push('Narxi: <s>'+plainMoney(p.price)+'</s> <b>'+plainMoney(p.salePrice)+' so‘m</b>'+he(u)+' (aksiya −'+pct(p)+'%)');
+  else L.push('Narxi: <b>'+plainMoney(p.price)+' so‘m</b>'+he(u));
+  if(Number(p.wsMin)>0&&Number(p.wsPrice)>0)L.push('Ulgurji: '+he(p.wsMin)+' '+he(p.unit||'dona')+'dan ko‘p — '+plainMoney(p.wsPrice)+' so‘m');
+  if(p.note)L.push('',he(p.note));
+  L.push('','Bo‘lim: '+he(c.n));
+  var ph=(DATA.store.phones||[]).map(fphone);if(ph.length)L.push('Tel: '+ph.join(', '));
+  L.push('<a href="'+he(prodURL(p))+'">Saytda ko‘rish va buyurtma berish</a>');
+  var s=L.join('\n');return s.length>1000?s.slice(0,990)+'…':s;
+}
+function dataToBlob(u){return fetch(u).then(function(r){return r.blob()})}
+function tgPost(p){
+  if(!tgReady())return Promise.reject(new Error('Telegram kanal sozlanmagan («Do‘kon ma’lumotlari» bo‘limida).'));
+  return loadPhotos(p).then(function(){
+    var srcs=(p.photos||[]).map(srcOf).filter(Boolean).slice(0,10),cap=tgCaption(p);
+    if(!srcs.length){var fd=new FormData();fd.append('chat_id',C.tg.chat);fd.append('text',cap);fd.append('parse_mode','HTML');return tgCall('sendMessage',fd)}
+    return Promise.all(srcs.map(dataToBlob)).then(function(blobs){
+      var fd=new FormData();fd.append('chat_id',C.tg.chat);
+      if(blobs.length===1){fd.append('photo',blobs[0],'p.jpg');fd.append('caption',cap);fd.append('parse_mode','HTML');return tgCall('sendPhoto',fd)}
+      fd.append('media',JSON.stringify(blobs.map(function(b,i){var m={type:'photo',media:'attach://f'+i};if(!i){m.caption=cap;m.parse_mode='HTML'}return m})));
+      blobs.forEach(function(b,i){fd.append('f'+i,b,'f'+i+'.jpg')});
+      return tgCall('sendMediaGroup',fd);
+    });
+  });
+}
+function tgReport(pr,okMsg){return pr.then(function(r){S.msg=r&&r.unsure?okMsg+' Kanalni tekshirib ko‘ring.':okMsg;render()}).catch(function(e){S.msg='Telegram kanalga yuborilmadi: '+((e&&e.message)||'xato');render()})}
+
 function renderCart(){
   var items=cartItems(),st=DATA.store||{},ph=st.phones||[];saveCart();
   var h='<div class="wrap"><div class="topbar"><button class="back" data-act="back">‹ Ortga</button></div><div class="edit"><h2>Savatcha</h2>';
@@ -589,7 +624,7 @@ function renderDetail(){
     '<button class="btn" data-act="share">'+I.share+' Ulashish</button></div>';
   h+=orderHTML(p,v);
   if(p.history&&p.history.length)h+='<h3>Oldingi narxlar</h3><ul class="hist">'+p.history.slice().reverse().map(function(x){return '<li><s>'+money(x.price)+' so‘m</s><span>'+fdate(x.date)+' dan</span></li>'}).join('')+'</ul>';
-  if(C.canEdit)h+='<div class="adminbar" style="margin:18px 0 0"><button class="btn primary" data-act="edit">Tahrirlash</button><button class="btn danger" data-act="del">O‘chirish</button></div>';
+  if(C.canEdit)h+='<div class="adminbar" style="margin:18px 0 0"><button class="btn primary" data-act="edit">Tahrirlash</button>'+(tgReady()?'<button class="btn" data-act="tgsend">'+I.tg+' Kanalga yuborish</button>':'')+'<button class="btn danger" data-act="del">O‘chirish</button></div>';
   else if(C.seller)h+='<div class="adminbar" style="margin:18px 0 0"><button class="btn primary" data-act="edit">Narx va qoldiqni o‘zgartirish</button></div>';
   h+='</div></article></div>';
   root.innerHTML=h+fabHTML();
@@ -614,6 +649,7 @@ function renderEdit(){
   inp('fstock','Qoldiq soni (ixtiyoriy)',d.stock,'number',' inputmode="numeric" min="0" placeholder="Bo‘sh qoldirsangiz — hisoblanmaydi"')+
   '<span class="hint" style="margin-top:-8px">5 tadan kam qolsa mijozga «Oz qoldi» deb chiqadi, 0 bo‘lsa «Hozir yo‘q» bo‘ladi.</span>'+
   '<label class="check"><input id="fout" type="checkbox"'+(d.out?' checked':'')+'>Hozir yo‘q (tugagan)</label>'+
+  (!d.seller&&tgReady()?'<label class="check"><input id="ftg" type="checkbox"'+(d.tgpost?' checked':'')+'>Saqlagach Telegram kanalga yuborilsin</label>':'')+
   '<fieldset class="opt"><legend>O‘lcham variantlari (ixtiyoriy)</legend><span class="hint" style="margin-top:-4px">Masalan: Kichik — 25 000, O‘rtacha — 35 000. Variant bo‘lsa, narx variantdan olinadi.</span>'+
     (d.variants||[]).map(function(x,i){return '<div class="vrow">'+inp('fvn'+i,'Nomi',x.name,'text',' placeholder="Kichik"')+inp('fvp'+i,'Narxi',x.price,'number',' inputmode="numeric" min="0" step="100"')+'<button type="button" data-vrm="'+i+'" aria-label="Variantni o‘chirish">×</button></div>'}).join('')+
     '<button type="button" class="btn" data-act="vadd">+ Variant qo‘shish</button></fieldset>'+
@@ -624,7 +660,7 @@ function renderEdit(){
   root.innerHTML=h;
 }
 var FIELDS={stock:'fstock',unit:'funit',name:'fname',cat:'fcat',price:'fprice',arrivalDate:'fadate',note:'fnote',salePrice:'fsale',wsMin:'fwsmin',wsPrice:'fwsprice'};
-function syncDraft(){var d=S.draft;if(!d)return;Object.keys(FIELDS).forEach(function(k){var e=document.getElementById(FIELDS[k]);if(e)d[k]=e.value});var o=document.getElementById('fout');if(o)d.out=o.checked;
+function syncDraft(){var d=S.draft;if(!d)return;Object.keys(FIELDS).forEach(function(k){var e=document.getElementById(FIELDS[k]);if(e)d[k]=e.value});var o=document.getElementById('fout');if(o)d.out=o.checked;var tq=document.getElementById('ftg');if(tq)d.tgpost=tq.checked;
   if(d.variants)d.variants=d.variants.map(function(x,i){var n=document.getElementById('fvn'+i),pp=document.getElementById('fvp'+i);return {name:n?n.value:x.name,price:pp?pp.value:x.price}})}
 
 function autoCat(){
@@ -649,6 +685,12 @@ function renderStore(){
   '<div class="row2">'+inp('sph1','1-telefon',ph[0],'tel')+inp('sph2','2-telefon',ph[1],'tel')+'</div>'+
   inp('stg','Telegram (lichka)',st.telegram?'@'+String(st.telegram).replace(/^@/,''):'','text',' placeholder="@username"')+
   inp('sstaff','Sotuvchilar emaillari (vergul bilan)',((DATA.staff||{}).sellers||[]).join(', '),'text',' placeholder="sotuvchi1@gmail.com, sotuvchi2@gmail.com"')+
+  '<fieldset class="opt"><legend>Telegram kanalga avtomatik joylash</legend>'+
+    inp('stgtok','Bot tokeni',(C.tg||{}).token,'text',' autocomplete="off" placeholder="123456789:AA…"')+
+    inp('stgchat','Kanal',(C.tg||{}).chat,'text',' placeholder="@kanal_nomi"')+
+    '<label class="check"><input id="stgauto" type="checkbox"'+((C.tg||{}).auto!==false?' checked':'')+'>Yangi mahsulot qo‘shilganda kanalga avtomatik yuborilsin</label>'+
+    '<button type="button" class="btn" data-act="tgtest">Sinov xabarini yuborish</button>'+
+    '<span class="hint">Token faqat sizga ko‘rinadi, saytda ochiq turmaydi.</span></fieldset>'+
   '<span class="hint" style="margin-top:-8px">Sotuvchi faqat narx, aksiya, qoldiq va variantlarni o‘zgartira oladi. Har biriga Firebase → Authentication → Users’da parol bilan foydalanuvchi oching.</span>'+
   (S.err?'<p class="err">'+esc(S.err)+'</p>':'')+
   '<button class="btn primary" type="submit"'+(S.busy?' disabled':'')+'>'+(S.busy?'Saqlanmoqda…':'Saqlash')+'</button></form></div>';
@@ -782,10 +824,17 @@ root.addEventListener('click',function(e){
   var mk=e.target.closest('[data-main]');if(mk){syncDraft();var k=+mk.getAttribute('data-main');var x=S.draft.photos.splice(k,1)[0];S.draft.photos.unshift(x);renderEdit();return}
   var a=e.target.closest('[data-act]');if(!a)return;var act=a.getAttribute('data-act');
   if(act==='back'){S.err='';var from=S.view;S.draft=null;S.imp=null;go(from==='edit'&&S.sel?'detail':'list');return}
-  if(act==='new'){S.sel=null;S.err='';S.draft={isNew:true,stock:'',variants:[],unit:'dona',photos:[],name:'',cat:'',price:'',arrivalDate:today(),note:'',salePrice:'',wsMin:'',wsPrice:'',out:false};go('edit');return}
+  if(act==='new'){S.sel=null;S.err='';S.draft={isNew:true,tgpost:tgReady()&&C.tg.auto!==false,stock:'',variants:[],unit:'dona',photos:[],name:'',cat:'',price:'',arrivalDate:today(),note:'',salePrice:'',wsMin:'',wsPrice:'',out:false};go('edit');return}
   if(act==='edit'){var p=byId(S.sel);S.err='';S.draft={isNew:false,photos:(p.photos||[]).map(function(x){return {id:x.id,vec:x.vec}}),name:p.name,unit:p.unit||'dona',cat:catOf(p),catManual:true,price:p.price,arrivalDate:p.arrivalDate||today(),note:p.note||'',salePrice:p.salePrice||'',wsMin:p.wsMin||'',wsPrice:p.wsPrice||'',out:!!p.out,stock:stockTracked(p)?p.stock:'',variants:(p.variants||[]).map(function(x){return {name:x.name,price:x.price}}),seller:!C.canEdit};go('edit');return}
   if(act==='store'){S.err='';go('store');return}
   if(act==='cart'){go('cart');return}
+  if(act==='tgsend'){var tp=byId(S.sel);if(!tp)return;a.disabled=true;a.textContent='Yuborilmoqda…';tgReport(tgPost(tp),'Telegram kanalga yuborildi.');return}
+  if(act==='tgtest'){var tok=document.getElementById('stgtok').value.trim(),ch=document.getElementById('stgchat').value.trim().replace(/^https?:\/\/t\.me\//,'@');
+    if(!tok||!ch){S.err='Token va kanalni yozing.';renderStore();return}
+    var prev=C.tg;C.tg={token:tok,chat:ch};var fd=new FormData();fd.append('chat_id',ch);fd.append('text','Sinov: sayt kanalga ulandi — '+DATA.store.name);
+    a.disabled=true;a.textContent='Yuborilmoqda…';
+    tgCall('sendMessage',fd).then(function(r){C.tg=prev;alert(r&&r.unsure?'Xabar yuborildi. Kanalni tekshiring.':'Kanalga sinov xabari yuborildi. Endi «Saqlash»ni bosing.');a.disabled=false;a.textContent='Sinov xabarini yuborish'})
+    .catch(function(e){C.tg=prev;alert('Yuborilmadi: '+e.message+'\n\nBot kanalga admin qilib qo‘shilganini va tokenni tekshiring.');a.disabled=false;a.textContent='Sinov xabarini yuborish'});return}
   if(act==='cartclear'){if(confirm('Savatcha tozalansinmi?')){CART={};saveCart();renderCart()}return}
   if(act==='stats'){S.stats=null;go('stats');loadStats();return}
   if(act==='labels'){S.err='';go('labels');return}
@@ -825,9 +874,10 @@ root.addEventListener('submit',function(e){
     var old=JSON.stringify(DATA.store);
     DATA.store.name=nm;DATA.store.address=v('saddr');DATA.store.hours=v('shours');DATA.store.mapUrl=v('smap');
     DATA.store.phones=[v('sph1'),v('sph2')].filter(Boolean);DATA.store.telegram=v('stg').replace(/^@/,'').replace(/^https?:\/\/t\.me\//,'');
+    var ntg={token:v('stgtok'),chat:v('stgchat').replace(/^https?:\/\/t\.me\//,'@'),auto:document.getElementById('stgauto').checked};
     var oldStaff=DATA.staff;DATA.staff={sellers:v('sstaff').split(/[\s,;]+/).map(function(x){return x.trim().toLowerCase()}).filter(function(x){return x.indexOf('@')>0})};
     S.busy=true;S.err='';renderStore();
-    save().catch(function(er){DATA.store=JSON.parse(old);DATA.staff=oldStaff;S.busy=false;S.err=er.message;renderStore()});return;
+    db.collection('secret').doc('telegram').set(ntg).then(function(){C.tg=ntg;return save()}).catch(function(er){DATA.store=JSON.parse(old);DATA.staff=oldStaff;S.busy=false;S.err=(er&&er.message)||'Saqlanmadi.';renderStore()});return;
   }
   if(e.target.id!=='ef')return;
   syncDraft();var d=S.draft;
@@ -863,7 +913,8 @@ root.addEventListener('submit',function(e){
     return dataToImg(u).then(function(im){p.thumb=thumbOf(im)}).catch(function(){});
   }).then(function(){
     if(old)DATA.products=DATA.products.map(function(x){return x.id===p.id?p:x});else DATA.products.push(p);
-    return save();
+    var post=!!d.tgpost&&tgReady();
+    return save().then(function(){if(post)tgReport(tgPost(p),'Saqlandi va Telegram kanalga yuborildi.')});
   }).catch(function(er){
     if(old)DATA.products=DATA.products.map(function(x){return x.id===old.id?old:x});else DATA.products=DATA.products.filter(function(x){return x.id!==p.id});
     S.busy=false;S.err=(er&&er.message)||'Saqlanmadi.';renderEdit();
@@ -895,7 +946,7 @@ function photoSearch(file){
 render();
 if(FBOK){
   auth.onAuthStateChanged(function(u){var em=u?String(u.email).toLowerCase():'';C.canEdit=!!u&&(!CFG.adminEmail||em===String(CFG.adminEmail).toLowerCase());C.seller=false;
-    if(u)db.collection('staff').doc('list').get().then(function(d){var st=d.exists?d.data():{sellers:[]};if(C.canEdit){DATA.staff=st;SNAP.__staff=JSON.stringify(st)}else if((st.sellers||[]).indexOf(em)>-1){C.seller=true}if(S.view==='list'||S.view==='detail')render()}).catch(function(){if(C.canEdit){DATA.staff={sellers:[]};SNAP.__staff=JSON.stringify(DATA.staff)}});
+    if(u)db.collection('staff').doc('list').get().then(function(d){var st=d.exists?d.data():{sellers:[]};if(C.canEdit){DATA.staff=st;SNAP.__staff=JSON.stringify(st);db.collection('secret').doc('telegram').get().then(function(t){C.tg=t.exists?t.data():null;if(S.view==='detail')renderDetail()}).catch(function(){})}else if((st.sellers||[]).indexOf(em)>-1){C.seller=true}if(S.view==='list'||S.view==='detail')render()}).catch(function(){if(C.canEdit){DATA.staff={sellers:[]};SNAP.__staff=JSON.stringify(DATA.staff)}});
     if(S.view==='list'||S.view==='detail')render()});
   if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(function(){});
   Promise.all([db.collection('settings').doc('store').get(),db.collection('products').get()]).then(function(r){
