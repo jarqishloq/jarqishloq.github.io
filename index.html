@@ -565,6 +565,7 @@ function renderList(){
   else if(C.seller)h+='<div class="adminbar"><span class="hint" style="align-self:center">Sotuvchi rejimi: narxni o‘zgartirish uchun mahsulotni oching.</span><button class="btn" data-act="labels">Narx yorliqlari</button><button class="btn" data-act="logout">Chiqish</button></div>';
   if(!S.photo)h+=bannerHTML();
   if(S.msg)h+='<p class="note">'+esc(S.msg)+'</p>';
+  if(C.canEdit&&C.tgErr)h+='<p class="note" style="background:var(--chip);color:var(--ink)">'+esc(C.tgErr)+'</p>';
   if(S.photo){
     h+='<div class="photoq"><img alt="Siz olgan rasm" src="'+esc(S.photo.url)+'"><div style="flex:1"><b>Rasm bo‘yicha natija</b><div class="cdate">'+esc(S.photo.status||'')+'</div></div><button class="btn" data-act="clearphoto">Yopish</button></div>';
     h+='<div class="grid">'+(S.photo.results||[]).map(function(r){return card(r.p,r.label?'<div class="match">'+esc(r.label)+'</div>':'')}).join('')+'</div></div>';
@@ -946,7 +947,10 @@ function photoSearch(file){
 render();
 if(FBOK){
   auth.onAuthStateChanged(function(u){var em=u?String(u.email).toLowerCase():'';C.canEdit=!!u&&(!CFG.adminEmail||em===String(CFG.adminEmail).toLowerCase());C.seller=false;
-    if(u)db.collection('staff').doc('list').get().then(function(d){var st=d.exists?d.data():{sellers:[]};if(C.canEdit){DATA.staff=st;SNAP.__staff=JSON.stringify(st);db.collection('secret').doc('telegram').get().then(function(t){C.tg=t.exists?t.data():null;if(S.view==='detail')renderDetail()}).catch(function(){})}else if((st.sellers||[]).indexOf(em)>-1){C.seller=true}if(S.view==='list'||S.view==='detail')render()}).catch(function(){if(C.canEdit){DATA.staff={sellers:[]};SNAP.__staff=JSON.stringify(DATA.staff)}});
+    C.tg=null;C.tgErr='';
+    if(C.canEdit)db.collection('secret').doc('telegram').get().then(function(t){C.tg=t.exists?t.data():null;if(!C.tg)C.tgErr='Telegram kanal hali sozlanmagan: «Do‘kon ma’lumotlari»da token va kanalni yozib, «Saqlash»ni bosing.';if(S.view==='detail'||S.view==='list')render()})
+      .catch(function(e){C.tgErr='Telegram sozlamasini o‘qib bo‘lmadi: Firebase qoidalarida «secret» bo‘limi yo‘q. Rules’ni yangilang.';if(S.view==='list')render()});
+    if(u)db.collection('staff').doc('list').get().then(function(d){var st=d.exists?d.data():{sellers:[]};if(C.canEdit){DATA.staff=st;SNAP.__staff=JSON.stringify(st)}else if((st.sellers||[]).indexOf(em)>-1){C.seller=true}if(S.view==='list'||S.view==='detail')render()}).catch(function(){if(C.canEdit){DATA.staff={sellers:[]};SNAP.__staff=JSON.stringify(DATA.staff)}});
     if(S.view==='list'||S.view==='detail')render()});
   if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(function(){});
   Promise.all([db.collection('settings').doc('store').get(),db.collection('products').get()]).then(function(r){
